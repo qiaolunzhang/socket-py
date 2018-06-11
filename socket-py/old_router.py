@@ -142,22 +142,92 @@ class Router:
                 print("Failed to unpack the packet length")
 
 
-    def _process_packet_interest(self, sock, data_origin, data):
-        if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
-        else:
-            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock_client.connect((self.aid_host, self.aid_port))
-            self.out_conn_dic[self.aid_host] = sock_client
-            self.sock_to_ip_dic[sock_client] = self.aid_host
-            self.connections.append(sock_client)
+    def _process_packet_interest(self, sock, typ_content, data_origin, data):
+        # log: type 1
+        #@todo 根据是否拦截来发送最后面的0,1表示
+        time_now = datetime.now()
+        time_num_str = str(time_now.year) + str(time_now.month) + str(time_now.day) + str(time_now.hour) + str(time_now.minute) + str(time_now.second) + str(time_now.microsecond)
+        try:
+            # consumer收到了兴趣包, 在log文件下方附加
+            with open("./log/router.log", 'a+') as f:
+                # |src,    |dst,    |type,   |pass,  |time
+                # |0,      |      1,|      1,|     1,|2018526221022933988
+                packet_log = self.host + ", " + self.sock_to_ip_dic[sock] + ", " + "1, " + "1, " + time_num_str + ", " + data
+                #packet_log = time_num_str + " interest " + self.sock_to_ip_dic[sock] + " " + self.host + " " + data + ' 1 '
+                f.write(packet_log+'\n')
+                #self.visualize_socket.send(packet_log)
+                print("Send the data to visualize server")
+        except Exception, e:
+            print(Exception, ", ", e)
 
-            # @todo data_origin需要修改
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
+        # 如果cs表里头有那么就直接发
+        #  根据content name查询服务器
+        if self.firewall_enable:
+            self.firewall_socket.send(data)
+            firewall_result = self.firewall_socket.recv(4096)
+            print("The result is ", firewall_result)
+            if firewall_result == '0':
+                packet_log = self.host + ", " + self.sock_to_ip_dic[sock] + ", " + "1, " + "0, " + time_num_str + ", " + data
+                self.visualize_socket.send(packet_log)
+                print("The message is blocked")
+                return
+
+        packet_log = self.host + ", " + self.sock_to_ip_dic[sock] + ", " + "1, " + "1, " + time_num_str + ", " + data
+        self.visualize_socket.send(packet_log)
+
+        if data in self.cs_dic.keys():
+            # 如果cs表里头有，那么直接读取，然后返回
+            try:
+                data_location = self.cs_dic[data]
+                f = open(data_location, 'rb')
+                message = ''
+                l = f.read(1024)
+                while (l):
+                    message = message + l
+                    l = f.read(1024)
+                f.close()
+
+                content_name = data
+                content_len = struct.pack('>I', len(content_name))
+                message = content_len + content_name + message
+
+                message = struct.pack('>I', len(message)) + \
+                          struct.pack('>I', 2) + message
+                sock.send(message)
+                return
+            except Exception, e:
+                print(Exception, ", ", e)
+                return
+
+        # 如果pit表里头请求过
+        # @todo 需要解决多次请求问题，同一个客户端多次请求，以及不同客户端的再次请求,那么pit表里头放得就是一个列表了
+        if data in self.pit_dic.keys():
+            return
+        # 如果都没有
+        try:
+            next_hop_ip = self.fib_dic[data]
+            if next_hop_ip in self.out_conn_dic.keys():
+                self.out_conn_dic[next_hop_ip].send(data_origin)
+            else:
+                sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock_client.connect((self.fib_dic[data], 10000))
+
+                self.out_conn_dic[next_hop_ip] = sock_client
+                self.ip_to_sock_dic[next_hop_ip] = sock_client
+                self.sock_to_ip_dic[sock_client] = next_hop_ip
+                self.connections.append(sock_client)
+
+                sock_client.send(data_origin)
+                print("Send the packet to ", self.fib_dic[data])
+            # 然后改变pit表
+            self.pit_dic[data] = sock
+        except Exception, e:
+            print(Exception, ", ", e)
+
+        print("\n****************************************************\n")
 
 
-    def _process_packet_data(self, sock, data_origin, data):
+    def _process_packet_data(self, sock, typ_content, data_origin, data):
         print("Succeed to get back packet")
         content_name_len_pack = data[:4]
         try:
@@ -189,10 +259,6 @@ class Router:
             print("\n****************************************************\n")
 
 
-    def _process_packet_aid(self, sock, data_origin, data):
-        pass
-
-
     def _process_packet(self, sock, typ_content, data_origin, data):
         print("\n")
         print("Now process the packet type: ", typ_content)
@@ -202,12 +268,13 @@ class Router:
         print("The cs table is: \n")
         print(self.cs_dic)
 
+        print()
         if typ_content == 1:
-            self._process_packet_interest(sock, data_origin, data)
+            self._process_packet_interest(sock, typ_content, data_origin, data);
+
         elif typ_content == 2:
-            self._process_packet_data(sock, data_origin, data)
-        elif typ_content == 3:
-            self._process_packet_aid(sock, data_origin, data)
+            self._process_packet_data(sock, typ_content, data_origin, data)
+
 
 
     def _run(self):
