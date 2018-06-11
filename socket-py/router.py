@@ -7,10 +7,6 @@ from datetime import datetime
 
 import utils
 
-#_HOST = '127.0.0.1'
-#_HOST = '192.168.80.135'
-#_PORT = 10000
-
 
 class Router:
     MAX_WAITING_CONNECTIONS = 100
@@ -37,17 +33,8 @@ class Router:
         self.ip_to_sock_dic = {}
         self.sock_to_ip_dic = {}
         self.load_config()
-
-        self.log_init()
+        print("loading config complete.")
         self._run()
-
-
-    def log_init(self):
-        try:
-            self.log_file = open("./log/router.log", "w+")
-            self.log_file.close()
-        except Exception, e:
-            print(Exception, ", ", e)
 
 
     def load_config(self):
@@ -249,23 +236,6 @@ class Router:
             content_name = data[4: 4 + content_name_len]
             print("Content name is ", content_name)
 
-            #@todo 发送数据包log
-            # log type 2:
-            time_now = datetime.now()
-            time_num_str = str(time_now.year) + str(time_now.month) + str(time_now.day) + str(time_now.hour) + str(time_now.minute) + str(time_now.second) + str(time_now.microsecond)
-            try:
-                # consumer收到了兴趣包, 在log文件下方附加
-                with open("./log/router.log", 'a+') as f:
-                    packet_log = time_num_str + " data " + self.sock_to_ip_dic[sock] + " " + self.host + " " + content_name + ' 1 '
-                    # sock.send(packet_log)
-                    f.write(packet_log + '\n')
-                    #self.visualize_socket.send(packet_log)
-            except Exception, e:
-                print(Exception, ", ", e)
-
-            packet_log = self.host + ", " + self.sock_to_ip_dic[sock] + ", " + "2, " + "1, " + time_num_str + ", " + content_name
-            self.visualize_socket.send(packet_log)
-
             content = data[4 + content_name_len:]
             if content_name in self.pit_dic.keys():
                 # 缓存
@@ -304,6 +274,7 @@ class Router:
 
         elif typ_content == 2:
             self._process_packet_data(sock, typ_content, data_origin, data)
+
 
 
     def _run(self):
