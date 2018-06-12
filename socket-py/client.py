@@ -5,46 +5,49 @@ import struct
 import sys
 from datetime import datetime
 
-_HOST = '127.0.0.1'
-_PORT = 10000
 
-class Consumer:
+def get_packet_request(content_name):
+    # 请求名长度
+    message = struct.pack('>I', len(content_name))
+    # 请求名
+    message = message + content_name
+    # 长度+类型+message
+    message = struct.pack('>I', len(message)) + struct.pack('>I', 1) + message
+    return message
+
+
+class Client:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
     RECV_msg_content = 4
     RECV_MSG_TYPE_LEN = 4
 
-    def __init__(self, host, port):
+
+    def __init__(self, config_path):
         # store the data
         self.data_dic = {}
 
-        self.host = host
-        self.port = port
+        self.host = ""
+        self.port = 10000
         self.connections = [] # collects all the incoming connections
-        self.load_config()
-        self.log_init()
+        self.load_config(config_path)
+        print("Loading config complete")
         self._run()
 
-    def log_init(self):
-        try:
-            # os.path.exists("./log/consumer.log"):
-            self.log_file = open("./log/consumer.log", "w+")
-            self.log_file.close()
-        except Exception, e:
-            print(Exception, ", ", e)
 
-
-    def load_config(self):
+    def load_config(self, config_path):
         try:
-            with open('./config/consumer.conf') as f:
+            with open(config_path) as f:
                 for line in f:
                     if line[0] != '#':
                         line = line.split()
-                        self.host = line[0]
-                        self.port = int(line[1])
+                        if line[0] == 'router_ip':
+                            self.host = line[1]
+                            self.port = int(line[2])
         except Exception, e:
             print(Exception, ", ", e)
             raise SystemExit
+
 
     def _bind_socket(self):
         """
@@ -56,6 +59,7 @@ class Consumer:
         self.server_socket.connect((self.host, self.port))
         self.connections.append(self.server_socket)
         self.connections.append(sys.stdin)
+
 
     def _receive(self, sock):
         """
@@ -70,17 +74,17 @@ class Consumer:
         msg_content = 0
         typ_content = 0
 
-        # 得到数据包的总长度
+        # msg_content: 序列化后的数据包的总长度
         while tot_len < self.RECV_msg_content:
             msg_content = sock.recv(self.RECV_msg_content)
             tot_len += len(msg_content)
         tot_len = 0
-        print("The length of data is ", len(msg_content))
-        # 得到数据包的类型
+
+        # typ_content: 序列化后的数据包的类型
         while tot_len < self.RECV_MSG_TYPE_LEN:
             typ_content = sock.recv(self.RECV_MSG_TYPE_LEN)
             tot_len += len(typ_content)
-        print("The type of the packet is ", typ_content)
+
         if typ_content:
             try:
                 packet_type = struct.unpack('>I', typ_content)[0]
@@ -88,10 +92,9 @@ class Consumer:
             except Exception, e:
                 print(Exception, ", ", e)
                 print("Failed to unpack the package type")
+                return
 
-        # if packet_type != 2:
-        #    return
-
+        # 如果包里头没有内容，那就并不做处理
         if msg_content:
             data = ''
             try:
@@ -111,49 +114,61 @@ class Consumer:
                         tot_data_len += len(chunk)
                 # 原始的整个数据包
                 data_origin = msg_content + typ_content + data
+                # sock.send(data)
                 print("The received data is ", data, 'the length is', len(data))
-                # 对数据包和兴趣包采取不同的方式
-                if packet_type == 1:
-                    self._process_interest_packet(data)
-                elif packet_type == 2:
-                    self._process_data_packet(data)
+                self._process_packet(sock, packet_type, data_origin, data)
             except Exception, e:
-                print("Failed to unpack the packet length")
                 print(Exception, ", ", e)
-        print("\n**********************************************\n")
+                print("Failed to unpack the packet length")
 
 
-    def _process_interest_packet(self, data):
-        try:
-            # consumer收到了兴趣包, 在log文件下方附加
-            with open("./log/consumer.log", 'a+') as f:
-                time_now = str(datetime.now())
-                packet_log = time_now + " receive interest " + data + ' 0 ' + '\n'
-                f.write(packet_log)
-        except Exception, e:
-            print(Exception, ", ", e)
+    def _process_packet_interest(self, sock, content_name, content):
+        pass
 
 
-    def _process_data_packet(self, data):
-        print("\n")
+    def _process_packet_aid_reply(self, sock, content_name, content):
+        pass
+
+    def _process_packet_aid_query(self, sock, content_name, content):
+        pass
+
+
+    def _process_packet_data(self, sock, content_name, content):
         print("Succeed to get back data packet")
-        content_name_len_pack = data[:4]
         try:
-            content_name_len = struct.unpack('>I', content_name_len_pack)[0]
-            print("Content name length is ", content_name_len)
-            content_name = data[4: 4 + content_name_len]
-            print("Content name is ", content_name)
-            content = data[4 + content_name_len : ]
             print("Get the data: ")
             # 解码成utf-8才能正常显示
-            print(content.decode('utf-8'))
-            # 记录成功接受
-            with open('./log/consumer.log', 'a+') as f:
-                time_now = str(datetime.now())
-                packet_log = time_now + " receive data " + content_name + " 1 " + "\n"
-                f.write(packet_log)
+            print(data.decode('utf-8'))
         except Exception, e:
             print(Exception, ", ", e)
+
+
+    def _process_packet(self, sock, typ_content, data_origin, data):
+        print("Now process the packet: ", typ_content)
+
+        content_name_len = data[0:4]
+        content_name_len = struct.unpack('>I', content_name_len)[0]
+        content_name = data[4:4+content_name_len]
+        if (4+content_name_len) >= len(data):
+            content = ""
+        else:
+            content = data[4+content_name_len:]
+
+        print "The content name is: ",
+        print content_name.decode('utf-8')
+        print "The content is: ",
+        print content.decode('utf-8')
+
+        if typ_content == 1:
+            self._process_packet_interest(sock, content_name, content)
+        elif typ_content == 2:
+            self._process_packet_data(sock, content_name, content)
+        elif typ_content == 3:
+            self._process_packet_aid_query(sock, content_name, content)
+        elif typ_content == 4:
+            self._process_packet_aid_reply(sock, content_name, content)
+
+        print("*******************************************************************************")
 
 
     def _run(self):
@@ -181,20 +196,13 @@ class Consumer:
                         message = sys.stdin.readline()
                         message = message[:-1]
                         # 保存真实发送的数据
-                        message_log = message
-                        message = struct.pack('>I', len(message)) + \
-                                  struct.pack('>I', 1) + message
-                        self.server_socket.send(message)
+                        packet = get_packet_request(message)
+                        self.server_socket.send(packet)
 
                         # 记录发送包
-                        with open('./log/consumer.log', 'a+') as f:
-                            time_now = str(datetime.now())
-                            packet_log = time_now + " send interest " + message_log + " 1 " + "\n"
-                            f.write(packet_log)
-
-                        sys.stdout.write("Send the message: ")
-                        sys.stdout.write(message_log)
+                        sys.stdout.write("Send the message: " + message)
                         sys.stdout.write('\n')
                         sys.stdout.flush()
 
-p = Consumer(_HOST, _PORT)
+
+p = Client("./config/client.conf")

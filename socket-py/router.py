@@ -8,38 +8,28 @@ from datetime import datetime
 import utils
 
 
-class Router:
+class BaseServer:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
     RECV_msg_content = 4
     RECV_MSG_TYPE_LEN = 4
 
-    def __init__(self):
+    def __init__(self, config_file):
         # 用于保存文件名
-        self.file_number = 1
-        # store the fib form
-        self.fib_dic = {}
-        # store the pit form
-        self.pit_dic = {}
-        # store the cs form
-        self.cs_dic = {}
-
         self.host = ''
         self.port = 20000
-        self.aid_host = ''
-        self.aid_port = 11111
         self.connections = [] # collects all the incoming connections
         self.out_conn_dic = {} # collects all the outcoming connections
         self.ip_to_sock_dic = {}
         self.sock_to_ip_dic = {}
-        self.load_config()
+        self.load_config(config_file)
         print("loading config complete.")
         self._run()
 
 
-    def load_config(self):
+    def load_config(self, config_file):
         try:
-            with open('./config/router.conf') as f:
+            with open(config_file) as f:
                 for line in f:
                     if line[0] != '#':
                         line = line.split()
@@ -55,17 +45,13 @@ class Router:
                             self.server_host = line[1]
                             self.server_port = int(line[2])
                             continue
-                        self.fib_dic[line[0]] = line[1]
+                        if line[0] == 'client_ip':
+                            self.client_host = line[1]
+                            continue
         except Exception, e:
             print(Exception, ", ", e)
             print("Failed to load the config file")
             raise SystemExit
-
-        try:
-            if not os._exists('./cache/'):
-                os.mkdir('./cache')
-        except:
-            return
 
 
     def _bind_socket(self):
@@ -143,6 +129,9 @@ class Router:
 
 
     def _process_packet_interest(self, sock, data_origin, data):
+        """
+        send packet to aid
+        """
         if self.aid_host in self.out_conn_dic.keys():
             self.out_conn_dic[self.aid_host].send(data_origin)
         else:
@@ -157,31 +146,33 @@ class Router:
             print("\n****************************************************\n")
 
 
-    def _process_packet_data(self, sock, data_origin, data):
-        print("Succeed to get back packet")
-        content_name_len_pack = data[:4]
+    def _process_packet_aid(self, sock, data_origin, data):
+        """
+        get the packet from aid
+        """
+        print("Succeed to get packet from aid")
+        aid_packet_type_pack = data[:4]
         try:
-            content_name_len = struct.unpack('>I', content_name_len_pack)[0]
-            print("Content name length is ", content_name_len)
-            content_name = data[4: 4 + content_name_len]
-            print("Content name is ", content_name)
-
-            content = data[4 + content_name_len:]
-            if content_name in self.pit_dic.keys():
-                # 缓存
-                file_name = './cache/file_' + str(self.file_number)
-                self.file_number = self.file_number + 1
-                f = open(file_name, 'wb')
-                f.write(content)
-                f.close()
-                # cs_dic内添加已经缓存的内容
-                self.cs_dic[content_name] = file_name
-                # 发送给请求方
-                self.pit_dic[content_name].send(data_origin)
-                # pit_dic删除已经获得的内容发送给请求方
-                del self.pit_dic[content_name]
-            else:
-                return
+            aid_packet_type = struct.unpack('>I', aid_packet_type_pack)[0]
+            print("Aid packet type is ", aid_packet_type)
+            # 包的数据
+            content = data[4:]
+            print("Content is ", content_name)
+            if aid_packet_type == 1:
+                message = struct.pack('>I', len(content)) + struct.pack('>I', 1) + content
+                if self.server_host in self.out_conn_dic.keys():
+                    self.out_conn_dic[self.server_host].send(message)
+                else:
+                    sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock_client.connect((self.server_host, self.server_port))
+                    self.out_conn_dic[self.server_host] = sock_client
+                    self.sock_to_ip_dic[sock_client] = self.server_host
+                    self.connections.append(sock_client)
+                    sock_client.send(message)
+            elif aid_packet_type == 2:
+                message = struct.pack('>I', len(content)) + struct.pack('>I', 2) + content
+                sock_client = self.ip_to_sock_dic[self.client_host]
+                sock_client.send(message)
 
             print("\n****************************************************\n")
         except Exception, e:
@@ -189,25 +180,49 @@ class Router:
             print("\n****************************************************\n")
 
 
-    def _process_packet_aid(self, sock, data_origin, data):
-        pass
+    def _process_packet_data(self, sock, data_origin, data):
+        """
+        get the data from the server, send it to aid
+        """
+        if self.aid_host in self.out_conn_dic.keys():
+            self.out_conn_dic[self.aid_host].send(data_origin)
+        else:
+            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock_client.connect((self.aid_host, self.aid_port))
+            self.out_conn_dic[self.aid_host] = sock_client
+            self.sock_to_ip_dic[sock_client] = self.aid_host
+            self.connections.append(sock_client)
+
+            sock_client.send(data_origin)
+            print("\n****************************************************\n")
 
 
     def _process_packet(self, sock, typ_content, data_origin, data):
-        print("\n")
-        print("Now process the packet type: ", typ_content)
-        print("The pit table is: \n")
-        print(self.pit_dic)
-        print("\n")
-        print("The cs table is: \n")
-        print(self.cs_dic)
+        print("Now process the packet: ", typ_content)
+
+        content_name_len = data[0:4]
+        content_name_len = struct.unpack('>I', content_name_len)[0]
+        content_name = data[4:4+content_name_len]
+        if (4+content_name_len) >= len(data):
+            content = ""
+        else:
+            content = data[4+content_name_len:]
+
+        print "The content name is: ",
+        print content_name.decode('utf-8')
+        print "The content is: ",
+        print content.decode('utf-8')
 
         if typ_content == 1:
-            self._process_packet_interest(sock, data_origin, data)
+            self._process_packet_interest(sock, content_name, content)
         elif typ_content == 2:
-            self._process_packet_data(sock, data_origin, data)
+            self._process_packet_data(sock, content_name, content)
         elif typ_content == 3:
-            self._process_packet_aid(sock, data_origin, data)
+            self._process_packet_aid_query(sock, content_name, content)
+        elif typ_content == 4:
+            self._process_packet_aid_reply(sock, content_name, content)
+
+        print("*******************************************************************************")
 
 
     def _run(self):
@@ -248,4 +263,4 @@ class Router:
                             continue
 
 
-r = Router()
+r = BaseServer("./config/router.conf")

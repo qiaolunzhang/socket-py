@@ -2,69 +2,56 @@
 import select
 import socket
 import struct
+import os
 from datetime import datetime
 
-#_HOST = '127.0.0.1'
-#_HOST = '192.168.80.134'
-#_PORT = 10000
+import utils
 
-class Publisher:
+
+class BaseServer:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
     RECV_msg_content = 4
     RECV_MSG_TYPE_LEN = 4
 
-    def __init__(self):
-        # store the data
-        self.data_dic = {}
-
+    def __init__(self, config_file):
+        # 用于保存文件名
         self.host = ''
         self.port = 20000
-        self.visualize_host = ''
-        self.visualize_port = ''
         self.connections = [] # collects all the incoming connections
+        self.out_conn_dic = {} # collects all the outcoming connections
+        self.ip_to_sock_dic = {}
         self.sock_to_ip_dic = {}
-        self.load_config()
-        self.log_init()
-        self.visualize_init()
+        self.load_config(config_file)
+        print("loading config complete.")
         self._run()
 
-    def log_init(self):
-        try:
-            self.log_file = open("./log/publisher.log", "w+")
-            self.log_file.close()
-        except Exception, e:
-            print(Exception, ", ", e)
 
-    def load_config(self):
+    def load_config(self, config_file):
         try:
-            with open('./config/publisher.conf') as f:
+            with open(config_file) as f:
                 for line in f:
                     if line[0] != '#':
                         line = line.split()
-                        if line[0] == 'publisher_ip':
+                        if line[0] == 'local_ip':
                             self.host = line[1]
                             self.port = int(line[2])
                             continue
-                        if line[0] == 'visual_ip':
-                            self.visualize_host = line[1]
-                            self.visualize_port = int(line[2])
+                        if line[0] == 'aid_ip':
+                            self.aid_host = line[1]
+                            self.aid_port = int(line[2])
                             continue
-                        self.data_dic[line[0]] = line[1]
-
+                        if line[0] == 'server_ip':
+                            self.server_host = line[1]
+                            self.server_port = int(line[2])
+                            continue
+                        if line[0] == 'client_ip':
+                            self.client_host = line[1]
+                            continue
         except Exception, e:
             print(Exception, ", ", e)
+            print("Failed to load the config file")
             raise SystemExit
-
-
-    def visualize_init(self):
-        try:
-            self.visualize_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.visualize_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.visualize_socket.connect((self.visualize_host, self.visualize_port))
-            print("Connect to visualize server, host is ", self.visualize_host, "port is ", self.visualize_port)
-        except Exception, e:
-            print(Exception, ", ", e)
 
 
     def _bind_socket(self):
@@ -74,9 +61,11 @@ class Publisher:
         """
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        print("Now binding the socket, host is ", self.host, " port is ", self.port)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(self.MAX_WAITING_CONNECTIONS)
         self.connections.append(self.server_socket)
+
 
     def _receive(self, sock):
         """
@@ -91,23 +80,27 @@ class Publisher:
         msg_content = 0
         typ_content = 0
 
-        # 得到数据包的总长度
+        # msg_content: 序列化后的数据包的总长度
         while tot_len < self.RECV_msg_content:
             msg_content = sock.recv(self.RECV_msg_content)
             tot_len += len(msg_content)
         tot_len = 0
-        print("The length of data is ", len(msg_content))
-        # 得到数据包的类型
+
+        # typ_content: 序列化后的数据包的类型
         while tot_len < self.RECV_MSG_TYPE_LEN:
             typ_content = sock.recv(self.RECV_MSG_TYPE_LEN)
             tot_len += len(typ_content)
-        print("The type of the packet is ", typ_content)
+
         if typ_content:
             try:
                 packet_type = struct.unpack('>I', typ_content)[0]
                 print("The package type is ", packet_type)
-            except:
+            except Exception, e:
+                print(Exception, ", ", e)
                 print("Failed to unpack the package type")
+                return
+
+        # 如果包里头没有内容，那就并不做处理
         if msg_content:
             data = ''
             try:
@@ -127,52 +120,110 @@ class Publisher:
                         tot_data_len += len(chunk)
                 # 原始的整个数据包
                 data_origin = msg_content + typ_content + data
-                print("接受到的兴趣包的content name为")
-                print(data.decode('utf-8'))
-                time_now = datetime.now()
-                time_num_str = str(time_now.year) + str(time_now.month) + str(time_now.day) + str(time_now.hour) + str(time_now.minute) + str(time_now.second) + str(time_now.microsecond)
-                # log
-                if packet_type == 1:
-                    try:
-                        #@todo 可以增加记录收到兴趣包的情况
-                        # consumer收到了兴趣包, 在log文件下方附加
-                        with open("./log/publisher.log", 'a+') as f:
-
-                            packet_log = time_num_str + " interest " + self.sock_to_ip_dic[sock] + " " + self.host + " " + data + ' 1 '
-                            f.write(packet_log + '\n')
-                    except Exception, e:
-                        print(Exception, ", ", e)
-
-                elif packet_type == 2:
-                    pass
-
-                packet_log = self.host + ", " + self.sock_to_ip_dic[sock] + ", " + "1, " + "1, " + time_num_str + ", " + data
-                self.visualize_socket.send(packet_log)
-
-                # 如果包的类型和content name都对上的话，就把数据包发给router
-                try:
-                    data_location = self.data_dic[data]
-                    f = open(data_location, 'rb')
-                    message = ''
-                    l = f.read(1024)
-                    while (l):
-                        message = message + l
-                        l = f.read(1024)
-                    f.close()
-
-                    content_name = data
-                    content_len = struct.pack('>I', len(content_name))
-                    message = content_len + content_name + message
-
-                    message = struct.pack('>I', len(message)) + \
-                              struct.pack('>I', 2) + message
-                    sock.send(message)
-                except Exception, e:
-                    print(Exception, ", ", e)
+                # sock.send(data)
+                print("The received data is ", data, 'the length is', len(data))
+                self._process_packet(sock, packet_type, data_origin, data)
             except Exception, e:
-                print("Failed to unpack the packet length")
                 print(Exception, ", ", e)
-        print("\n**********************************************\n")
+                print("Failed to unpack the packet length")
+
+
+    def _process_packet_interest(self, sock, data_origin, data):
+        """
+        send packet to aid
+        """
+        if self.aid_host in self.out_conn_dic.keys():
+            self.out_conn_dic[self.aid_host].send(data_origin)
+        else:
+            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock_client.connect((self.aid_host, self.aid_port))
+            self.out_conn_dic[self.aid_host] = sock_client
+            self.sock_to_ip_dic[sock_client] = self.aid_host
+            self.connections.append(sock_client)
+
+            # @todo data_origin需要修改
+            sock_client.send(data_origin)
+            print("\n****************************************************\n")
+
+
+    def _process_packet_aid(self, sock, data_origin, data):
+        """
+        get the packet from aid
+        """
+        print("Succeed to get packet from aid")
+        aid_packet_type_pack = data[:4]
+        try:
+            aid_packet_type = struct.unpack('>I', aid_packet_type_pack)[0]
+            print("Aid packet type is ", aid_packet_type)
+            # 包的数据
+            content = data[4:]
+            print("Content is ", content_name)
+            if aid_packet_type == 1:
+                message = struct.pack('>I', len(content)) + struct.pack('>I', 1) + content
+                if self.server_host in self.out_conn_dic.keys():
+                    self.out_conn_dic[self.server_host].send(message)
+                else:
+                    sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock_client.connect((self.server_host, self.server_port))
+                    self.out_conn_dic[self.server_host] = sock_client
+                    self.sock_to_ip_dic[sock_client] = self.server_host
+                    self.connections.append(sock_client)
+                    sock_client.send(message)
+            elif aid_packet_type == 2:
+                message = struct.pack('>I', len(content)) + struct.pack('>I', 2) + content
+                sock_client = self.ip_to_sock_dic[self.client_host]
+                sock_client.send(message)
+
+            print("\n****************************************************\n")
+        except Exception, e:
+            print(Exception, ", ", e)
+            print("\n****************************************************\n")
+
+
+    def _process_packet_data(self, sock, data_origin, data):
+        """
+        get the data from the server, send it to aid
+        """
+        if self.aid_host in self.out_conn_dic.keys():
+            self.out_conn_dic[self.aid_host].send(data_origin)
+        else:
+            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock_client.connect((self.aid_host, self.aid_port))
+            self.out_conn_dic[self.aid_host] = sock_client
+            self.sock_to_ip_dic[sock_client] = self.aid_host
+            self.connections.append(sock_client)
+
+            sock_client.send(data_origin)
+            print("\n****************************************************\n")
+
+
+    def _process_packet(self, sock, typ_content, data_origin, data):
+        print("Now process the packet: ", typ_content)
+
+        content_name_len = data[0:4]
+        content_name_len = struct.unpack('>I', content_name_len)[0]
+        content_name = data[4:4+content_name_len]
+        if (4+content_name_len) >= len(data):
+            content = ""
+        else:
+            content = data[4+content_name_len:]
+
+        print "The content name is: ",
+        print content_name.decode('utf-8')
+        print "The content is: ",
+        print content.decode('utf-8')
+
+        if typ_content == 1:
+            self._process_packet_interest(sock, content_name, content)
+        elif typ_content == 2:
+            self._process_packet_data(sock, content_name, content)
+        elif typ_content == 3:
+            self._process_packet_aid_query(sock, content_name, content)
+        elif typ_content == 4:
+            self._process_packet_aid_reply(sock, content_name, content)
+
+        print("*******************************************************************************")
+
 
     def _run(self):
         self._bind_socket()
@@ -193,6 +244,7 @@ class Publisher:
                             try:
                                 # Handles a new client connection
                                 client_socket, client_address = self.server_socket.accept()
+                                self.ip_to_sock_dic[client_address[0]] = client_socket
                                 self.sock_to_ip_dic[client_socket] = client_address[0]
                             except socket.error:
                                 break
@@ -211,4 +263,4 @@ class Publisher:
                             continue
 
 
-p = Publisher()
+r = BaseServer("./config/router.conf")

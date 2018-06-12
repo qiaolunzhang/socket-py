@@ -8,28 +8,38 @@ from datetime import datetime
 import utils
 
 
-class BaseServer:
+class Router:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
     RECV_msg_content = 4
     RECV_MSG_TYPE_LEN = 4
 
-    def __init__(self, config_file):
+    def __init__(self):
         # 用于保存文件名
+        self.file_number = 1
+        # store the fib form
+        self.fib_dic = {}
+        # store the pit form
+        self.pit_dic = {}
+        # store the cs form
+        self.cs_dic = {}
+
         self.host = ''
         self.port = 20000
+        self.aid_host = ''
+        self.aid_port = 11111
         self.connections = [] # collects all the incoming connections
         self.out_conn_dic = {} # collects all the outcoming connections
         self.ip_to_sock_dic = {}
         self.sock_to_ip_dic = {}
-        self.load_config(config_file)
+        self.load_config()
         print("loading config complete.")
         self._run()
 
 
-    def load_config(self, config_file):
+    def load_config(self):
         try:
-            with open(config_file) as f:
+            with open('./config/router.conf') as f:
                 for line in f:
                     if line[0] != '#':
                         line = line.split()
@@ -52,6 +62,12 @@ class BaseServer:
             print(Exception, ", ", e)
             print("Failed to load the config file")
             raise SystemExit
+
+        try:
+            if not os._exists('./cache/'):
+                os.mkdir('./cache')
+        except:
+            return
 
 
     def _bind_socket(self):
@@ -198,31 +214,16 @@ class BaseServer:
 
 
     def _process_packet(self, sock, typ_content, data_origin, data):
-        print("Now process the packet: ", typ_content)
-
-        content_name_len = data[0:4]
-        content_name_len = struct.unpack('>I', content_name_len)[0]
-        content_name = data[4:4+content_name_len]
-        if (4+content_name_len) >= len(data):
-            content = ""
-        else:
-            content = data[4+content_name_len:]
-
-        print "The content name is: ",
-        print content_name.decode('utf-8')
-        print "The content is: ",
-        print content.decode('utf-8')
+        print("\n")
+        print("Now process the packet type: ", typ_content)
+        print("\n")
 
         if typ_content == 1:
-            self._process_packet_interest(sock, content_name, content)
+            self._process_packet_interest(sock, data_origin, data)
         elif typ_content == 2:
-            self._process_packet_data(sock, content_name, content)
+            self._process_packet_data(sock, data_origin, data)
         elif typ_content == 3:
-            self._process_packet_aid_query(sock, content_name, content)
-        elif typ_content == 4:
-            self._process_packet_aid_reply(sock, content_name, content)
-
-        print("*******************************************************************************")
+            self._process_packet_aid(sock, data_origin, data)
 
 
     def _run(self):
@@ -263,4 +264,4 @@ class BaseServer:
                             continue
 
 
-r = BaseServer("./config/router.conf")
+r = Router()

@@ -8,28 +8,38 @@ from datetime import datetime
 import utils
 
 
-class BaseServer:
+class Router:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
     RECV_msg_content = 4
     RECV_MSG_TYPE_LEN = 4
 
-    def __init__(self, config_file):
+    def __init__(self):
         # 用于保存文件名
+        self.file_number = 1
+        # store the fib form
+        self.fib_dic = {}
+        # store the pit form
+        self.pit_dic = {}
+        # store the cs form
+        self.cs_dic = {}
+
         self.host = ''
         self.port = 20000
+        self.aid_host = ''
+        self.aid_port = 11111
         self.connections = [] # collects all the incoming connections
         self.out_conn_dic = {} # collects all the outcoming connections
         self.ip_to_sock_dic = {}
         self.sock_to_ip_dic = {}
-        self.load_config(config_file)
+        self.load_config()
         print("loading config complete.")
         self._run()
 
 
-    def load_config(self, config_file):
+    def load_config(self):
         try:
-            with open(config_file) as f:
+            with open('./config/aid.conf') as f:
                 for line in f:
                     if line[0] != '#':
                         line = line.split()
@@ -37,21 +47,16 @@ class BaseServer:
                             self.host = line[1]
                             self.port = int(line[2])
                             continue
-                        if line[0] == 'aid_ip':
-                            self.aid_host = line[1]
-                            self.aid_port = int(line[2])
-                            continue
-                        if line[0] == 'server_ip':
-                            self.server_host = line[1]
-                            self.server_port = int(line[2])
-                            continue
-                        if line[0] == 'client_ip':
-                            self.client_host = line[1]
-                            continue
         except Exception, e:
             print(Exception, ", ", e)
             print("Failed to load the config file")
             raise SystemExit
+
+        try:
+            if not os._exists('./cache/'):
+                os.mkdir('./cache')
+        except:
+            return
 
 
     def _bind_socket(self):
@@ -130,99 +135,54 @@ class BaseServer:
 
     def _process_packet_interest(self, sock, data_origin, data):
         """
-        send packet to aid
+        发送改变后的消息，判断缓存中是否有，翻译的时候加一个不同的字段
         """
-        if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
+        if data in self.cs_dic.keys():
+            try:
+                message = self.cs_dic[data]
+                message = struct.pack('>I', 2) + message
+                message = struct.pack('>I', len(message)) + struct.pack('>I', 3) + message
+                sock.send(message)
+            except Exception, e:
+                print(Exception, ", ", e)
+                return
         else:
-            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock_client.connect((self.aid_host, self.aid_port))
-            self.out_conn_dic[self.aid_host] = sock_client
-            self.sock_to_ip_dic[sock_client] = self.aid_host
-            self.connections.append(sock_client)
-
-            # @todo data_origin需要修改
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
-
-
-    def _process_packet_aid(self, sock, data_origin, data):
-        """
-        get the packet from aid
-        """
-        print("Succeed to get packet from aid")
-        aid_packet_type_pack = data[:4]
-        try:
-            aid_packet_type = struct.unpack('>I', aid_packet_type_pack)[0]
-            print("Aid packet type is ", aid_packet_type)
-            # 包的数据
-            content = data[4:]
-            print("Content is ", content_name)
-            if aid_packet_type == 1:
-                message = struct.pack('>I', len(content)) + struct.pack('>I', 1) + content
-                if self.server_host in self.out_conn_dic.keys():
-                    self.out_conn_dic[self.server_host].send(message)
-                else:
-                    sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock_client.connect((self.server_host, self.server_port))
-                    self.out_conn_dic[self.server_host] = sock_client
-                    self.sock_to_ip_dic[sock_client] = self.server_host
-                    self.connections.append(sock_client)
-                    sock_client.send(message)
-            elif aid_packet_type == 2:
-                message = struct.pack('>I', len(content)) + struct.pack('>I', 2) + content
-                sock_client = self.ip_to_sock_dic[self.client_host]
-                sock_client.send(message)
-
-            print("\n****************************************************\n")
-        except Exception, e:
-            print(Exception, ", ", e)
-            print("\n****************************************************\n")
+            try:
+                message = "from aid"
+                message = struct.pack('>I', 1) + message
+                message = struct.pack('>I', len(message)) + struct.pack('>I', 3) + message
+                sock_client.send(data_origin)
+        print("\n****************************************************\n")
 
 
     def _process_packet_data(self, sock, data_origin, data):
         """
-        get the data from the server, send it to aid
+        get the data from the router, send query result back to router
         """
-        if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
-        else:
-            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock_client.connect((self.aid_host, self.aid_port))
-            self.out_conn_dic[self.aid_host] = sock_client
-            self.sock_to_ip_dic[sock_client] = self.aid_host
-            self.connections.append(sock_client)
+        print("Succeed to get data packet")
+        content_name_len = struct.unpack('>I', content_name_len_pack)[0]
+        print("Content name length is ", content_name_len)
+        content_name = data[4: 4 + content_name_len]
+        print("Content name is ", content_name)
 
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
+        content = data[4 + content_name_len:]
+        self.cs_dic[content_name] = content
+
+        message = data + "get the data"
+        message = struct.pack('>I', 2) + message
+        message = struct.pack('>I', len(message)) + struct.pack('>I', 3) + message
+        sock.send(data_origin)
 
 
     def _process_packet(self, sock, typ_content, data_origin, data):
-        print("Now process the packet: ", typ_content)
-
-        content_name_len = data[0:4]
-        content_name_len = struct.unpack('>I', content_name_len)[0]
-        content_name = data[4:4+content_name_len]
-        if (4+content_name_len) >= len(data):
-            content = ""
-        else:
-            content = data[4+content_name_len:]
-
-        print "The content name is: ",
-        print content_name.decode('utf-8')
-        print "The content is: ",
-        print content.decode('utf-8')
+        print("\n")
+        print("Now process the packet type: ", typ_content)
+        print("\n")
 
         if typ_content == 1:
-            self._process_packet_interest(sock, content_name, content)
+            self._process_packet_interest(sock, data_origin, data)
         elif typ_content == 2:
-            self._process_packet_data(sock, content_name, content)
-        elif typ_content == 3:
-            self._process_packet_aid_query(sock, content_name, content)
-        elif typ_content == 4:
-            self._process_packet_aid_reply(sock, content_name, content)
-
-        print("*******************************************************************************")
+            self._process_packet_data(sock, data_origin, data)
 
 
     def _run(self):
@@ -263,4 +223,4 @@ class BaseServer:
                             continue
 
 
-r = BaseServer("./config/router.conf")
+r = Router()
