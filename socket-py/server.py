@@ -8,6 +8,62 @@ from datetime import datetime
 import utils
 
 
+def generate_points(x, y, R):
+    theta = 2.0 * math.pi * random.random()
+    x1 = x + R * math.sin(theta)
+    y1 = y + R * math.cos(theta)
+    x1 = str(x1)
+    y1 = str(y1)
+    R = str(R)
+    message = struct.pack('>I', len(x1)) + x1
+    message = message + struct.pack('>I', len(y1)) + y1
+    message = message + struct.pack('>I', len(R)) + R
+    return message
+
+
+def generate_three_points(x, y, R):
+    message = ""
+    for i in range(3):
+        message = message + generate_points(x, y, R)
+    return message
+
+
+def decode_three_points(message):
+    print("Now decode the points")
+    points_list = []
+    message = message.split('|')
+    print(message)
+    i = 0
+    j = 1
+    k = 2
+    for t in range(3):
+        points_list.append([message[i], message[j], message[k]])
+        i = i + 3
+        j = j + 3
+        k = k + 3
+    print(points_list)
+    return points_list
+
+
+def decode_points(message):
+    message = message.split('|')
+    x1 = float(message[0])
+    y1 = float(message[1])
+    r = float(message[2])
+    print(x1,  y1, r)
+    return x1, y1, r
+
+
+def get_packet_request(content_name, content, packet_type):
+    # 请求名长度
+    message = struct.pack('>I', len(content_name))
+    # 请求名
+    message = message + content_name + content
+    # 长度+类型+message
+    message = struct.pack('>I', len(message)) + struct.pack('>I', packet_type) + message
+    return message
+
+
 class BaseServer:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
@@ -128,22 +184,14 @@ class BaseServer:
                 print("Failed to unpack the packet length")
 
 
-    def _process_packet_interest(self, sock, data_origin, data):
+    def _process_packet_interest(self, sock, content_name, content):
         """
         send packet to aid
         """
-        if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
-        else:
-            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock_client.connect((self.aid_host, self.aid_port))
-            self.out_conn_dic[self.aid_host] = sock_client
-            self.sock_to_ip_dic[sock_client] = self.aid_host
-            self.connections.append(sock_client)
-
-            # @todo data_origin需要修改
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
+        points_list = decode_three_points(content_name)
+        message  = "@todo server"
+        message = get_packet_request(content_name, message, 2)
+        sock.send(message)
 
 
     def _process_packet_aid(self, sock, data_origin, data):
@@ -263,4 +311,4 @@ class BaseServer:
                             continue
 
 
-r = BaseServer("./config/router.conf")
+r = BaseServer("./config/server.conf")

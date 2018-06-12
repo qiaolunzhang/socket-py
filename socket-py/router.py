@@ -8,6 +8,16 @@ from datetime import datetime
 import utils
 
 
+def get_packet_request(content_name, content, packet_type):
+    # 请求名长度
+    message = struct.pack('>I', len(content_name))
+    # 请求名
+    message = message + content_name + content
+    # 长度+类型+message
+    message = struct.pack('>I', len(message)) + struct.pack('>I', packet_type) + message
+    return message
+
+
 class BaseServer:
     MAX_WAITING_CONNECTIONS = 100
     RECV_BUFFER = 4096
@@ -16,6 +26,7 @@ class BaseServer:
 
     def __init__(self, config_file):
         # 用于保存文件名
+        self.real_client = ""
         self.host = ''
         self.port = 20000
         self.connections = [] # collects all the incoming connections
@@ -35,6 +46,10 @@ class BaseServer:
                         line = line.split()
                         if line[0] == 'local_ip':
                             self.host = line[1]
+                            self.port = int(line[2])
+                            continue
+                        if line[0] == 'router_ip':
+                            self.router_host = line[1]
                             self.port = int(line[2])
                             continue
                         if line[0] == 'aid_ip':
@@ -128,12 +143,14 @@ class BaseServer:
                 print("Failed to unpack the packet length")
 
 
-    def _process_packet_interest(self, sock, data_origin, data):
+    def _process_packet_interest(self, sock, content_name, content):
         """
         send packet to aid
         """
+        self.real_client = sock
+        message = get_packet_request(content_name, content, 1)
         if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
+            self.out_conn_dic[self.aid_host].send(message)
         else:
             sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock_client.connect((self.aid_host, self.aid_port))
@@ -142,59 +159,45 @@ class BaseServer:
             self.connections.append(sock_client)
 
             # @todo data_origin需要修改
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
+            sock_client.send(message)
 
 
-    def _process_packet_aid(self, sock, data_origin, data):
+    def _process_packet_aid_reply(self, sock, content_name, content):
         """
         get the packet from aid
         """
-        print("Succeed to get packet from aid")
-        aid_packet_type_pack = data[:4]
-        try:
-            aid_packet_type = struct.unpack('>I', aid_packet_type_pack)[0]
-            print("Aid packet type is ", aid_packet_type)
-            # 包的数据
-            content = data[4:]
-            print("Content is ", content_name)
-            if aid_packet_type == 1:
-                message = struct.pack('>I', len(content)) + struct.pack('>I', 1) + content
-                if self.server_host in self.out_conn_dic.keys():
-                    self.out_conn_dic[self.server_host].send(message)
-                else:
-                    sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock_client.connect((self.server_host, self.server_port))
-                    self.out_conn_dic[self.server_host] = sock_client
-                    self.sock_to_ip_dic[sock_client] = self.server_host
-                    self.connections.append(sock_client)
-                    sock_client.send(message)
-            elif aid_packet_type == 2:
-                message = struct.pack('>I', len(content)) + struct.pack('>I', 2) + content
-                sock_client = self.ip_to_sock_dic[self.client_host]
-                sock_client.send(message)
-
-            print("\n****************************************************\n")
-        except Exception, e:
-            print(Exception, ", ", e)
-            print("\n****************************************************\n")
+        print("self.client_host is", self.client_host)
+        message = get_packet_request(content_name, content, 2)
+        self.real_client.send(message)
 
 
-    def _process_packet_data(self, sock, data_origin, data):
+    def _process_packet_data(self, sock, content_name, content):
         """
         get the data from the server, send it to aid
         """
+        message = get_packet_request(content_name, content, 2)
         if self.aid_host in self.out_conn_dic.keys():
-            self.out_conn_dic[self.aid_host].send(data_origin)
+            self.out_conn_dic[self.aid_host].send(message)
         else:
             sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock_client.connect((self.aid_host, self.aid_port))
             self.out_conn_dic[self.aid_host] = sock_client
             self.sock_to_ip_dic[sock_client] = self.aid_host
             self.connections.append(sock_client)
+            sock_client.send(message)
 
-            sock_client.send(data_origin)
-            print("\n****************************************************\n")
+
+    def _process_packet_aid_query(self, sock, content_name, content):
+        message = get_packet_request(content_name, content, 1)
+        if self.server_host in self.out_conn_dic.keys():
+            self.out_conn_dic[self.server_host].send(message)
+        else:
+            sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock_client.connect((self.server_host, self.server_port))
+            self.out_conn_dic[self.server_host] = sock_client
+            self.sock_to_ip_dic[sock_client] = self.server_host
+            self.connections.append(sock_client)
+            sock_client.send(message)
 
 
     def _process_packet(self, sock, typ_content, data_origin, data):
@@ -244,8 +247,8 @@ class BaseServer:
                             try:
                                 # Handles a new client connection
                                 client_socket, client_address = self.server_socket.accept()
-                                self.ip_to_sock_dic[client_address[0]] = client_socket
-                                self.sock_to_ip_dic[client_socket] = client_address[0]
+                                # self.ip_to_sock_dic[client_address[0]] = client_socket
+                                # self.sock_to_ip_dic[client_socket] = client_address[0]
                             except socket.error:
                                 break
                             else:

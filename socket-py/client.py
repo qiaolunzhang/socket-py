@@ -4,15 +4,25 @@ import select
 import struct
 import sys
 from datetime import datetime
+import random
+import math
 
 
-def get_packet_request(content_name):
+def encode_points(x, y, R):
+    x = str(x)
+    y = str(y)
+    R = str(R)
+    message = x + '|' + y + '|' + R
+    return message
+
+
+def get_packet_request(content_name, content, packet_type):
     # 请求名长度
     message = struct.pack('>I', len(content_name))
     # 请求名
-    message = message + content_name
+    message = message + content_name + content
     # 长度+类型+message
-    message = struct.pack('>I', len(message)) + struct.pack('>I', 1) + message
+    message = struct.pack('>I', len(message)) + struct.pack('>I', packet_type) + message
     return message
 
 
@@ -138,7 +148,7 @@ class Client:
         try:
             print("Get the data: ")
             # 解码成utf-8才能正常显示
-            print(data.decode('utf-8'))
+            print(content.decode('utf-8'))
         except Exception, e:
             print(Exception, ", ", e)
 
@@ -195,12 +205,19 @@ class Client:
                         # 如果是用户输入
                         message = sys.stdin.readline()
                         message = message[:-1]
+                        message = message.split()
+                        x = int(message[0])
+                        y = int(message[1])
+                        r = int(message[2])
                         # 保存真实发送的数据
-                        packet = get_packet_request(message)
+                        print("x is ", x, " y is ", y, "r is ", r)
+                        message = encode_points(x, y, r)
+                        packet = get_packet_request(message, "", 1)
                         self.server_socket.send(packet)
 
                         # 记录发送包
-                        sys.stdout.write("Send the message: " + message)
+                        print("Content name is: ")
+                        sys.stdout.write(message)
                         sys.stdout.write('\n')
                         sys.stdout.flush()
 
