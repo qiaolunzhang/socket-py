@@ -77,6 +77,9 @@ class BaseServer:
 
     def __init__(self, config_file):
         # 用于保存文件名
+        self.message_points_list = ['', '', '']
+        self.content_name_dic = {}
+        self.new_content_name_dic = {}
         self.host = ''
         self.port = 20000
         self.connections = [] # collects all the incoming connections
@@ -204,20 +207,24 @@ class BaseServer:
         print("Now content name is: ")
         print(content_name)
         x, y, r = decode_points(content_name)
-        message_list = []
-        if content_name in self.cs_dic.keys():
-            message = self.cs_dic[content_name]
+        if content_name in self.content_name_dic.keys():
             # @todo remove the following line
-            message = message + "buffer"
+            message = self.cs_dic[content_name]
             message = get_packet_request(content_name, message, 4)
-            message_list.append(message)
         else:
             message = generate_three_points(x, y, r)
+            # content_name对应新的content_name
+            self.content_name_dic[content_name] = message
+            self.new_content_name_dic[message] = content_name
             message = get_packet_request(message, "", 3)
-
+            """
+            for i in range(3):
+                message = generate_points(x, y, r)
+                message = get_packet_request(message, "", 3)
+                self.message_points_list[i] = message
+            """
         if self.router_host in self.out_conn_dic.keys():
-            for m in message_list:
-                self.out_conn_dic[self.router_host].send(message)
+            self.out_conn_dic[self.router_host].send(message)
         else:
             sock_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock_client.connect((self.router_host, self.router_port))
@@ -228,12 +235,48 @@ class BaseServer:
             sock_client.send(message)
 
 
+    def _find_best_point(self, points, original_content_name, best_point):
+        """
+        points: 3.0|3.0|5.0|5.0|4.0|5.0|5.0|3.0
+        """
+        original_content_name = original_content_name.split('|')
+        x = float(original_content_name[0])
+        y = float(original_content_name[1])
+        z = float(original_content_name[2])
+
+        points = points.split('|')
+        num_points = len(points) / 2
+        for i in range(num_points):
+            distance_best = (best_point[0] - x) * (best_point[0] - x) + (best_point[1] - y) * (best_point[1] - y)
+            index = 2 * i
+            x_tmp = float(points[index])
+            y_tmp = float(points[index+1])
+            distance_now = (x_tmp-x)*(x_tmp-x) + (y_tmp - y) * (y_tmp - y)
+            if distance_now <= distance_best:
+                best_point[0] = x_tmp
+                best_point[1] = y_tmp
+        return best_point
+
+
     def _process_packet_data(self, sock, content_name, content):
         """
         """
-        # 简单的缓存
-        self.cs_dic[content_name] = content
-        message = get_packet_request(content_name, content, 4)
+        # @todo 选出最好的点
+        best_point = [0, 0]
+        points_returned = content.split(';')
+        original_content_name = self.new_content_name_dic[content_name]
+        r = float(content_name.split('|')[2])
+        print("points returned is: ")
+        print(points_returned)
+        print("r is: ", r)
+        for points in points_returned:
+            print(points)
+            if points:
+                best_point = self._find_best_point(points, original_content_name, best_point)
+        best_point[0] = str(best_point[0])
+        best_point[1] = str(best_point[1])
+        best_point = "|".join(best_point)
+        message = get_packet_request(self.new_content_name_dic[content_name], best_point, 4)
         if self.router_host in self.out_conn_dic.keys():
             self.out_conn_dic[self.router_host].send(message)
         else:
@@ -243,6 +286,8 @@ class BaseServer:
             self.sock_to_ip_dic[sock_client] = self.router_host
             self.connections.append(sock_client)
             sock_client.send(message)
+        # @todo message需要改成点
+        self.cs_dic[self.new_content_name_dic[content_name]] = best_point
 
 
     def _process_packet(self, sock, typ_content, data_origin, data):

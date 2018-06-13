@@ -33,10 +33,11 @@ def decode_three_points(message):
     points_list = []
     message = message.split('|')
     print(message)
+    num = len(message) / 3
     i = 0
     j = 1
     k = 2
-    for t in range(3):
+    for t in range(num):
         points_list.append([message[i], message[j], message[k]])
         i = i + 3
         j = j + 3
@@ -72,6 +73,8 @@ class BaseServer:
 
     def __init__(self, config_file):
         # 用于保存文件名
+        self.points = []
+        self.load_points()
         self.host = ''
         self.port = 20000
         self.connections = [] # collects all the incoming connections
@@ -81,6 +84,30 @@ class BaseServer:
         self.load_config(config_file)
         print("loading config complete.")
         self._run()
+
+
+    def inner_points(self, x, y, r):
+        inner = ""
+        for points in self.points:
+            distance = (x-points[0]) * (x-points[0]) + (y-points[1]) * (y-points[1])
+            if distance <= r * r:
+                if inner:
+                    inner = inner + "|" + str(points[0]) + "|" + str(points[1])
+                else:
+                    inner = inner + str(points[0]) + "|" + str(points[1])
+        return inner
+
+
+    def load_points(self):
+        try:
+            with open("./points.txt") as f:
+                for line in f:
+                    line = line.split()
+                    line[0] = float(line[0])
+                    line[1] = float(line[1])
+                    self.points.append(line)
+        except Exception, e:
+            print(Exception, ", ", e)
 
 
     def load_config(self, config_file):
@@ -189,7 +216,11 @@ class BaseServer:
         send packet to aid
         """
         points_list = decode_three_points(content_name)
-        message  = "@todo server"
+        message = []
+        for i in points_list:
+            points = self.inner_points(float(i[0]), float(i[1]), float(i[2]))
+            message.append(points)
+        message = ';'.join(message)
         message = get_packet_request(content_name, message, 2)
         sock.send(message)
 

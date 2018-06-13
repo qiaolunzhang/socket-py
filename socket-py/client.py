@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 import random
 import math
+import time
 
 
 def encode_points(x, y, R):
@@ -34,6 +35,8 @@ class Client:
 
 
     def __init__(self, config_path):
+        self.time_start = time.time()
+        self.time_end = time.time()
         # store the data
         self.data_dic = {}
 
@@ -172,12 +175,14 @@ class Client:
         if typ_content == 1:
             self._process_packet_interest(sock, content_name, content)
         elif typ_content == 2:
+            self.time_end = time.time()
             self._process_packet_data(sock, content_name, content)
         elif typ_content == 3:
             self._process_packet_aid_query(sock, content_name, content)
         elif typ_content == 4:
             self._process_packet_aid_reply(sock, content_name, content)
 
+        print(self.time_end - self.time_start)
         print("*******************************************************************************")
 
 
@@ -213,6 +218,7 @@ class Client:
                         print("x is ", x, " y is ", y, "r is ", r)
                         message = encode_points(x, y, r)
                         packet = get_packet_request(message, "", 1)
+                        self.time_start = time.time()
                         self.server_socket.send(packet)
 
                         # 记录发送包
